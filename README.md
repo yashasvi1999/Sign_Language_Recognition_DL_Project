@@ -1,1 +1,1 @@
-# SIgn_Language_Recognition_DL_Project
+# Sign_Language_Recognition_DL_Project
