@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Real-Time Gesture Recognition</title>
+
+  <!-- MediaPipe -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
+  <style>
+    body {
+      background: #0b0b0b;
+      color: #00ff88;
+      text-align: center;
+      font-family: Arial, sans-serif;
+    }
+    canvas {
+      border: 2px solid #00ff88;
+      margin-top: 10px;
+    }
+  </style>
+</head>
+
+<body>
+  <h2>🖐 Real-Time Gesture Recognition</h2>
+  <p id="status">Connecting…</p>
+
+  <video id="video" autoplay playsinline style="display:none"></video>
+  <canvas id="canvas"></canvas>
+  <p id="result">Waiting for hand…</p>
+
+<script>
+const video = document.getElementById("video");
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+const statusEl = document.getElementById("status");
+const resultEl = document.getElementById("result");
+
+let ws;
+let lastSent = 0;
+
+/* ---------------- WebSocket ---------------- */
+function connectWS() {
+  ws = new WebSocket("ws://localhost:8000/ws");
+
+  ws.onopen = () => statusEl.innerText = "🟢 Connected";
+
+  ws.onclose = () => {
+    statusEl.innerText = "🔴 Disconnected — reconnecting…";
+    setTimeout(connectWS, 1000);
+  };
+
+  ws.onmessage = (e) => {
+    if (e.data === "pong") return;
+    const data = JSON.parse(e.data);
+    if (data.label) {
+      resultEl.innerText =
+        `Gesture: ${data.label} (${data.confidence.toFixed(2)})`;
+    }
+  };
+}
+connectWS();
+
+/* ---------------- Heartbeat ---------------- */
+setInterval(() => {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send("ping");
+  }
+}, 15000);
+
+/* ---------------- MediaPipe Hands ---------------- */
+const hands = new Hands({
+  locateFile: file =>
+    `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+});
+
+hands.setOptions({
+  maxNumHands: 2,
+  modelComplexity: 1,
+  minDetectionConfidence: 0.6,
+  minTrackingConfidence: 0.6
+});
+
+hands.onResults(onResults);
+
+/* ---------------- Camera ---------------- */
+const camera = new Camera(video, {
+  onFrame: async () => {
+    await hands.send({ image: video });
+  },
+  width: 640,
+  height: 480
+});
+camera.start();
+
+/* ---------------- Main Logic ---------------- */
+function onResults(results) {
+  if (video.videoWidth === 0 || video.videoHeight === 0) return;
+
+  // ALWAYS draw preview
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+  if (!results.multiHandLandmarks) {
+    resultEl.innerText = "No hand detected";
+    return;
+  }
+
+  let xs = [];
+  let ys = [];
+
+  results.multiHandLandmarks.forEach(hand => {
+    hand.forEach(lm => {
+      xs.push(lm.x * canvas.width);
+      ys.push(lm.y * canvas.height);
+    });
+  });
+
+  let x1 = Math.max(Math.min(...xs) - 40, 0);
+  let y1 = Math.max(Math.min(...ys) - 40, 0);
+  let x2 = Math.min(Math.max(...xs) + 40, canvas.width);
+  let y2 = Math.min(Math.max(...ys) + 40, canvas.height);
+
+  if (x2 <= x1 || y2 <= y1) return;
+
+  // Draw bounding box
+  ctx.strokeStyle = "#00ff88";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+
+  // FPS throttle (~25 FPS)
+  const now = performance.now();
+  if (now - lastSent < 40) return;
+  lastSent = now;
+
+  // Crop hand
+  const crop = document.createElement("canvas");
+  crop.width = x2 - x1;
+  crop.height = y2 - y1;
+
+  crop.getContext("2d").drawImage(
+    canvas,
+    x1, y1, crop.width, crop.height,
+    0, 0, crop.width, crop.height
+  );
+
+  if (crop.width === 0 || crop.height === 0) return;
+
+  if (ws.readyState === WebSocket.OPEN) {
+    ws.send(crop.toDataURL("image/jpeg", 0.7));
+  }
+}
+</script>
+</body>
+</html>
