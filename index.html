@@ -42,7 +42,7 @@ let lastSent = 0;
 
 /* ---------------- WebSocket ---------------- */
 function connectWS() {
-  ws = new WebSocket("ws://localhost:8000/ws");
+  ws = new WebSocket("wss://islproject.dpdns.org/ws");
 
   ws.onopen = () => statusEl.innerText = "🟢 Connected";
 
